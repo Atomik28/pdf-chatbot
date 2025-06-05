@@ -1,3 +1,5 @@
+# pdf_reader.py
+
 import PyPDF2
 
 def extract_text_from_pdf(file):

@@ -1,43 +1,100 @@
-from transformers import pipeline
+import os
+import requests
+import json
 from vector_store import VectorStore
+from dotenv import load_dotenv
 
-# Load extractive QA pipeline (DistilBERT-SQuAD)
-qa_pipeline = pipeline(
-    "question-answering",
-    model="distilbert-base-cased-distilled-squad",
-    tokenizer="distilbert-base-cased-distilled-squad"
-)
+# Load Groq API key
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama3-70b-8192"
 
-# Initialize the VectorStore (embeds with all-MiniLM-L6-v2)
+# 1) Initialize Vector Store
 vs = VectorStore(model_name="all-MiniLM-L6-v2")
 
 def build_vector_store_from_text(full_text: str):
     """
-    Build FAISS index over the PDF text. Call this once after PDF upload.
+    Build FAISS index over the PDF's full text.
+    Call this after you extract text from the PDF.
     """
     vs.create_index(full_text)
 
-def answer_with_rag(question: str, top_k: int = 3):
+def answer_with_rag(question: str, top_k: int = 10, return_chunks: bool = False, stream: bool = False):
     """
-    1) Retrieve top_k chunks via FAISS
-    2) Run extractive QA on each chunk
-    3) Return the highest‐confidence answer
+    1) Retrieve top_k relevant chunks via FAISS
+    2) Concatenate chunks into context
+    3) Use Groq's LLaMA3 to answer via streaming or normal
     """
-    # 1) Retrieve relevant chunks
-    chunks = vs.retrieve(question, k=top_k)
-    all_answers = []
+    chunks = vs.retrieve(question, k=top_k * 4)
+    if not chunks:
+        return ("No relevant information found.", []) if return_chunks else "No relevant information found."
 
-    # 2) Run the QA pipeline over each chunk
-    for chunk in chunks:
-        result = qa_pipeline({
-            "context": chunk,
-            "question": question
-        })
-        # result contains 'score', 'answer'
-        all_answers.append(result)
+    # Combine context
+    context = "\n".join(chunks)
+    if len(context) > 6000:
+        context = context[:6000]
 
-    # 3) Pick the best answer by score
-    if not all_answers:
-        return "No relevant information found."
-    best = max(all_answers, key=lambda x: x["score"])
-    return best["answer"]
+    prompt = (
+        "You are a helpful and knowledgeable assistant. Based only on the following excerpts from a textbook or document, answer the user's question as thoroughly and clearly as possible. "
+        "If the answer is short enough, show the full answer in detail. If the answer is too long for the response, summarize long lists or explanations into concise bullet points, but do not omit any key information or steps. "
+        "Explain in simple terms, as if teaching a student. Use clear language and examples if possible. "
+        "If possible, quote or paraphrase relevant lines. If the answer is not present, say so.\n"
+        f"Context:\n{context}\n"
+        f"Question: {question}\n"
+        f"Answer:"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": "You are a helpful and knowledgeable assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 1024,
+        "temperature": 0.3,
+        "top_p": 0.8,
+        "stream": stream
+    }
+
+    if stream:
+        # STREAMING RESPONSE MODE
+        def stream_generator():
+            response = requests.post(GROQ_API_URL, headers=headers, json=data, stream=True)
+            for line in response.iter_lines():
+                if line and line.strip().startswith(b"data:"):
+                    clean = line.decode().replace("data: ", "").strip()
+                    if clean == "[DONE]":
+                        break
+                    try:
+                        delta = json.loads(clean)["choices"][0]["delta"]
+                        yield delta.get("content", "")
+                    except Exception as e:
+                        yield f"\n[Error parsing stream chunk: {e}]"
+        return stream_generator()
+    
+    else:
+        # NON-STREAMED (normal) RESPONSE MODE
+        response = requests.post(GROQ_API_URL, headers=headers, json=data)
+        try:
+            resp_json = response.json()
+        except Exception as e:
+            return f"[Groq API error: Could not parse response] {response.text}"
+
+        print("Groq API response:", resp_json)
+
+        if response.status_code == 200:
+            answer = resp_json.get("choices", [{}])[0].get("message", {}).get("content", "[No content in response]").strip()
+
+            # Flag suspicious content (like if Groq returned an API key or something wrong)
+            if answer.startswith("gsk_") or len(answer) < 5:
+                return f"[Groq API suspicious response] {resp_json}"
+        else:
+            return f"[Groq API error {response.status_code}] {response.text}"
+
+        return (answer, chunks) if return_chunks else answer
