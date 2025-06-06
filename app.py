@@ -1,7 +1,7 @@
 import streamlit as st
-from pdf_reader import extract_text_from_pdf
+from pdf_reader import extract_text_from_pdf, PDFProcessError
 from chatbot import build_vector_store_from_text, answer_with_rag
-from st_ui import configure_page, render_sidebar_header
+from st_ui import configure_page, render_sidebar_header, render_about_section
 
 configure_page()
 render_sidebar_header("assets/logo.png") 
@@ -29,17 +29,30 @@ if pdf_file is None:
     st.info("👈 Upload a PDF in the sidebar to get started.")
     st.stop()
 
+# Process PDF and build vector store with error handling
 if (
     "vector_store_built" not in st.session_state
     or st.session_state.get("last_pdf_filename") != getattr(pdf_file, "name", None)
 ):
-    with st.spinner("Extracting PDF text and building vector store..."):
-        full_text = extract_text_from_pdf(pdf_file)
-        build_vector_store_from_text(full_text)
-    st.session_state["vector_store_built"] = True
-    st.session_state["last_pdf_filename"] = getattr(pdf_file, "name", None)
-
-st.sidebar.success("✅ Vector store ready! You can now ask questions.")
+    try:
+        with st.spinner("Processing your PDF..."):
+            full_text = extract_text_from_pdf(pdf_file)
+            
+        # Only proceed to vector store if we got text
+        if full_text:
+            build_vector_store_from_text(full_text)
+            st.session_state["vector_store_built"] = True
+            st.session_state["last_pdf_filename"] = getattr(pdf_file, "name", None)
+            st.sidebar.success("✅ Vector store ready! You can now ask questions.")
+            
+    except PDFProcessError as e:
+        st.error(f"⚠️ {str(e)}")
+        st.session_state.clear()
+        st.stop()
+    except Exception as e:
+        st.error("⚠️ An unexpected error occurred while processing the PDF. Please try again with a different file.")
+        st.session_state.clear()
+        st.stop()
 
 # ---------------------------------------
 # STEP 2: Render Chat History (smartly)
@@ -75,23 +88,55 @@ if st.session_state.chat_history:
 # ---------------------------------
 # STEP 3: New Question Input (limit)
 # ---------------------------------
-
+MAX_QUESTION_LENGTH = 500
 num_asked = len(st.session_state.chat_history)
+
 if num_asked < 50:
-    user_question = st.chat_input("Type your question here and press Enter…")
+    user_question = st.chat_input("Type your question here and press Enter… (max 500 characters)")
+    
+    # Show character count if user is typing
+    if user_question:
+        current_length = len(user_question)
+        if current_length > MAX_QUESTION_LENGTH:
+            st.warning(f"⚠️ Your question is {current_length}/{MAX_QUESTION_LENGTH} characters. Please make it shorter.")
+            st.stop()
+        elif current_length > MAX_QUESTION_LENGTH * 0.8:  # Show counter when nearing limit
+            st.info(f"ℹ️ Character count: {current_length}/{MAX_QUESTION_LENGTH}")
 else:
     user_question = None
-    st.info("🛑 You have reached the 50-question limit for this chat. Refresh the page or click “Clear Chat” to start over.")
+    st.info("🛑 You have reached the 50-question limit for this chat. 'Download' the chat and click “Clear Chat” to start over.")
 
 if user_question:
-    st.session_state.chat_history.append({"user": user_question, "bot": ""})
-    st.rerun()
+    # Immediately show the user's question
+    with st.chat_message("user"):
+        st.markdown(user_question)
+    
+    # Add a small delay for better UX
+    import time
+    time.sleep(0.1)
+    
+    # Stream the answer in a new assistant message
+    full_answer = ""
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        with st.spinner("Searching for the answer..."):
+            for chunk in answer_with_rag(user_question, top_k=3, stream=True):
+                full_answer += chunk
+                placeholder.markdown(full_answer)
+    
+    # Only after we have the complete answer, add both to history
+    st.session_state.chat_history.append({
+        "user": user_question,
+        "bot": full_answer
+    })
 
 # --------------------------------------------
 # STEP 4: Show question‐count & export/clear
 # --------------------------------------------
-if num_asked > 0:
-    st.sidebar.markdown(f"**Questions used:** {num_asked} / 50")
+if len(st.session_state.chat_history) > 0:
+    # Count completed QA pairs (where both question and answer exist)
+    num_questions = len([turn for turn in st.session_state.chat_history if turn.get("bot")])
+    st.sidebar.markdown(f"**Questions used:** {num_questions} / 50")
 
     def _export_chat_as_text(chat_list):
         lines = []
@@ -108,7 +153,10 @@ if num_asked > 0:
         file_name="chat_history.txt",
         mime="text/plain"
     )
-
     if st.sidebar.button("🧹 Clear Chat"):
         st.session_state.chat_history = []
         st.rerun()
+
+# --------------------------------------------
+# Render About section at the very bottom of sidebar when there is chat history
+render_about_section()
