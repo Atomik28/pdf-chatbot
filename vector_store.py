@@ -4,6 +4,7 @@ from sentence_transformers import SentenceTransformer
 from langchain.text_splitter import CharacterTextSplitter
 import faiss
 import numpy as np
+import streamlit as st
 
 class VectorStore:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
@@ -14,27 +15,45 @@ class VectorStore:
 
     def create_index(self, full_text: str):
         """
-        1) Split full_text into overlapping chunks
-        2) Compute embeddings
-        3) Build a FAISS index
+        Create FAISS index with progress tracking
         """
-        # 1) Chunk the text
-        splitter = CharacterTextSplitter(
-            separator="\n",
-            chunk_size=300,  # even smaller chunk size for more granularity
-            chunk_overlap=200  # high overlap to preserve context
-        )
-        chunks = splitter.split_text(full_text)
-        self.text_chunks = chunks
+        progress_bar = st.progress(0, "Initializing...")
+        
+        try:
+            # 1) Split text into chunks (25%)
+            progress_bar.progress(0.1, "Splitting text into chunks...")
+            splitter = CharacterTextSplitter(
+                separator="\n",
+                chunk_size=300,  # even smaller chunk size for more granularity
+                chunk_overlap=200  # high overlap to preserve context
+            )
+            chunks = splitter.split_text(full_text)
+            self.text_chunks = chunks
+            progress_bar.progress(0.25, "Text splitting complete.")
 
-        # 2) Compute embeddings for all chunks
-        embeddings = self.embedder.encode(chunks, convert_to_numpy=True, show_progress_bar=False)
+            # 2) Compute embeddings (50%)
+            progress_bar.progress(0.3, "Computing embeddings...")
+            embeddings = self.embedder.encode(
+                chunks,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+                batch_size=32
+            )
+            progress_bar.progress(0.75, "Embeddings computed.")
 
-        # 3) Build a FAISS index (flat L2)
-        d = embeddings.shape[1]
-        index = faiss.IndexFlatL2(d)
-        index.add(embeddings)
-        self.index = index
+            # 3) Build FAISS index (25%)
+            progress_bar.progress(0.8, "Building search index...")
+            d = embeddings.shape[1]
+            index = faiss.IndexFlatL2(d)
+            index.add(embeddings)
+            self.index = index
+            
+            # Done!
+            progress_bar.progress(1.0, "Vector store ready!")
+            
+        except Exception as e:
+            progress_bar.empty()
+            raise e  # Re-raise to be caught by the app
 
     def retrieve(self, query: str, k: int = 3):
         """
