@@ -1,7 +1,7 @@
 # vector_store.py
 
 from sentence_transformers import SentenceTransformer
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 import faiss
 import numpy as np
 import streamlit as st
@@ -22,10 +22,12 @@ class VectorStore:
         try:
             # 1) Split text into chunks (25%)
             progress_bar.progress(0.1, "Splitting text into chunks...")
-            splitter = CharacterTextSplitter(
-                separator="\n",
-                chunk_size=300,  # even smaller chunk size for more granularity
-                chunk_overlap=200  # high overlap to preserve context
+            splitter = RecursiveCharacterTextSplitter(
+                # Try to split on these characters, in order
+                separators=["\n\n", "\n", ".", "!", "?", " ", ""],
+                chunk_size=500,  # slightly larger chunks for better context
+                chunk_overlap=50,  # reduced overlap since chunks are more meaningful
+                length_function=len,
             )
             chunks = splitter.split_text(full_text)
             self.text_chunks = chunks
@@ -39,11 +41,11 @@ class VectorStore:
                 show_progress_bar=False,
                 batch_size=32
             )
-            progress_bar.progress(0.75, "Embeddings computed.")
-
+            progress_bar.progress(0.75, "Embeddings computed.")            
             # 3) Build FAISS index (25%)
             progress_bar.progress(0.8, "Building search index...")
             d = embeddings.shape[1]
+            faiss.normalize_L2(embeddings)  # Normalize vectors for better similarity
             index = faiss.IndexFlatL2(d)
             index.add(embeddings)
             self.index = index
@@ -60,10 +62,9 @@ class VectorStore:
         Given a query string, return the top-k most relevant text chunks.
         """
         if self.index is None:
-            return []
-
-        # Embed the query
+            return []        # Embed the query and normalize
         q_emb = self.embedder.encode([query], convert_to_numpy=True)
+        faiss.normalize_L2(q_emb)  # Normalize query vector same as index vectors
         # Search FAISS
         distances, indices = self.index.search(q_emb, k)
         results = []

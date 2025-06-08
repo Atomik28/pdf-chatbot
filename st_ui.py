@@ -1,5 +1,7 @@
 import streamlit as st
 import base64
+from fpdf import FPDF
+import tempfile
 
 def render_about_section():
     """Renders the About section in the sidebar."""
@@ -78,3 +80,49 @@ def configure_page():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+
+def export_chat_history_to_pdf(chat_history, file_name="chat_history.pdf"):
+    """
+    Export chat history (list of dicts with 'user' and 'bot') to a PDF and return bytes.
+    """
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_font("Arial", size=12)
+    pdf.set_title("DocTalk Chat History")
+    pdf.cell(0, 10, "DocTalk Chat History", ln=True, align="C")
+    pdf.ln(5)
+    for idx, turn in enumerate(chat_history, start=1):
+        pdf.set_font("Arial", style="B", size=12)
+        pdf.multi_cell(0, 8, f"Q{idx}: {turn['user']}", align="L")
+        pdf.set_font("Arial", style="", size=12)
+        # Render code blocks in bot answer as monospace, rest as normal
+        answer = turn["bot"]
+        import re
+        code_block_pattern = re.compile(r"```([\w\+\-]*)\n([\s\S]*?)```", re.MULTILINE)
+        pos = 0
+        for match in code_block_pattern.finditer(answer):
+            start, end = match.span()
+            if start > pos:
+                md = answer[pos:start]
+                if md.strip():
+                    pdf.multi_cell(0, 8, md.strip(), align="L")
+            code = match.group(2)
+            pdf.set_font("Courier", size=10)
+            pdf.set_fill_color(240, 240, 240)
+            for line in code.splitlines():
+                pdf.cell(0, 6, line, ln=True, align="L", fill=True)
+            pdf.set_font("Arial", size=12)
+            pdf.set_fill_color(255, 255, 255)
+            pos = end
+        if pos < len(answer):
+            md = answer[pos:]
+            if md.strip():
+                pdf.multi_cell(0, 8, md.strip(), align="L")
+        pdf.ln(2)
+    # Output to bytes
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        pdf.output(tmp.name)
+        tmp.seek(0)
+        pdf_bytes = tmp.read()
+    return pdf_bytes

@@ -20,11 +20,12 @@ def build_vector_store_from_text(full_text: str):
     """
     vs.create_index(full_text)
 
-def answer_with_rag(question: str, top_k: int = 10, return_chunks: bool = False, stream: bool = False):
+def answer_with_rag(question: str, top_k: int = 10, return_chunks: bool = False, stream: bool = False, chat_history=None):
     """
     1) Retrieve top_k relevant chunks via FAISS
     2) Concatenate chunks into context
     3) Use Groq's LLaMA3 to answer via streaming or normal
+    4) Optionally include last 3 Q&A turns from chat_history for follow-up support
     """
     chunks = vs.retrieve(question, k=top_k * 4)
     if not chunks:
@@ -35,13 +36,29 @@ def answer_with_rag(question: str, top_k: int = 10, return_chunks: bool = False,
     if len(context) > 6000:
         context = context[:6000]
 
+    # Add last 3 Q&A turns from chat_history if provided
+    history_str = ""
+    if chat_history:
+        # Only use last 3 turns (Q&A pairs)
+        last_turns = chat_history[-3:]
+        for turn in last_turns:
+            user_q = turn.get("user", "")
+            bot_a = turn.get("bot", "")
+            if user_q:
+                history_str += f"User: {user_q}\n"
+            if bot_a:
+                history_str += f"Assistant: {bot_a}\n"
+        if history_str:
+            history_str = f"Previous conversation (last 3 turns):\n" + history_str + "---\n"
+
     prompt = (
         "You are a helpful and knowledgeable assistant. Based only on the following excerpts from a textbook or document, answer the user's question as thoroughly and clearly as possible. "
         "If the answer is short enough, show the full answer in detail. If the answer is too long for the response, summarize long lists or explanations into concise bullet points, but do not omit any key information or steps. "
         "Explain in simple terms, as if teaching a student. Use clear language and examples if possible. "
         "If possible, quote or paraphrase relevant lines. If the answer is not present, say so.\n"
-        f"Context:\n{context}\n"
-        f"Question: {question}\n"
+        f"{history_str}"
+        f"Context from the document:\n{context}\n"
+        f"User's new question: {question}\n"
         f"Answer:"
     )
 
