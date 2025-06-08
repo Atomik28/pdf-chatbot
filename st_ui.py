@@ -1,7 +1,6 @@
 import streamlit as st
 import base64
-from fpdf import FPDF
-import tempfile
+
 
 def render_about_section():
     """Renders the About section in the sidebar."""
@@ -83,22 +82,33 @@ def configure_page():
 
 def export_chat_history_to_pdf(chat_history, file_name="chat_history.pdf"):
     """
-    Export chat history (list of dicts with 'user' and 'bot') to a PDF and return bytes.
+    Export chat history (list of dicts with 'user' and 'bot') to a PDF and return bytes using ReportLab (full Unicode support).
     """
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_font("Arial", size=12)
-    pdf.set_title("DocTalk Chat History")
-    pdf.cell(0, 10, "DocTalk Chat History", ln=True, align="C")
-    pdf.ln(5)
+    from io import BytesIO
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib import colors
+    import re
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=0.75*inch, rightMargin=0.75*inch, topMargin=0.75*inch, bottomMargin=0.75*inch)
+    styles = getSampleStyleSheet()
+    normal = styles["Normal"]
+    normal.fontName = "Times-Roman"
+    normal.fontSize = 12
+    bold = ParagraphStyle(name="Bold", parent=normal, fontName="Times-Bold")
+    code = ParagraphStyle(name="Code", parent=normal, fontName="Courier", fontSize=10, backColor=colors.whitesmoke, leftIndent=12)
+    elements = []
+
+    elements.append(Paragraph("<b>DocTalk Chat History</b>", styles["Title"]))
+    elements.append(Spacer(1, 12))
     for idx, turn in enumerate(chat_history, start=1):
-        pdf.set_font("Arial", style="B", size=12)
-        pdf.multi_cell(0, 8, f"Q{idx}: {turn['user']}", align="L")
-        pdf.set_font("Arial", style="", size=12)
-        # Render code blocks in bot answer as monospace, rest as normal
+        elements.append(Paragraph(f"<b>Q{idx}:</b> {turn['user']}", bold))
         answer = turn["bot"]
-        import re
         code_block_pattern = re.compile(r"```([\w\+\-]*)\n([\s\S]*?)```", re.MULTILINE)
         pos = 0
         for match in code_block_pattern.finditer(answer):
@@ -106,23 +116,16 @@ def export_chat_history_to_pdf(chat_history, file_name="chat_history.pdf"):
             if start > pos:
                 md = answer[pos:start]
                 if md.strip():
-                    pdf.multi_cell(0, 8, md.strip(), align="L")
-            code = match.group(2)
-            pdf.set_font("Courier", size=10)
-            pdf.set_fill_color(240, 240, 240)
-            for line in code.splitlines():
-                pdf.cell(0, 6, line, ln=True, align="L", fill=True)
-            pdf.set_font("Arial", size=12)
-            pdf.set_fill_color(255, 255, 255)
+                    elements.append(Paragraph(md.strip().replace("\n", "<br/>"), normal))
+            code_text = match.group(2)
+            code_html = f'<font face="Courier">{code_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")}</font>'
+            elements.append(Paragraph(code_html, code))
             pos = end
         if pos < len(answer):
             md = answer[pos:]
             if md.strip():
-                pdf.multi_cell(0, 8, md.strip(), align="L")
-        pdf.ln(2)
-    # Output to bytes
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        pdf.output(tmp.name)
-        tmp.seek(0)
-        pdf_bytes = tmp.read()
-    return pdf_bytes
+                elements.append(Paragraph(md.strip().replace("\n", "<br/>"), normal))
+        elements.append(Spacer(1, 8))
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()

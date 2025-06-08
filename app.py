@@ -23,7 +23,12 @@ if len(st.session_state.chat_history) == 0:
 # STEP 1: Upload PDF & Build Vector Store
 # ---------------------------------------
 st.sidebar.header("📄 Upload PDF or DOCX (multiple, max 50MB total)")
-uploaded_files = st.sidebar.file_uploader("Choose PDF or DOCX files", type=["pdf", "docx"], accept_multiple_files=True)
+uploaded_files = st.sidebar.file_uploader(
+    "Choose PDF or DOCX files",
+    type=["pdf", "docx"],
+    accept_multiple_files=True,
+    help="You can upload multiple files, but the total size must be under 50MB."
+)
 
 if not uploaded_files:
     st.session_state.clear()

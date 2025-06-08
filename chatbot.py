@@ -36,26 +36,22 @@ def answer_with_rag(question: str, top_k: int = 10, return_chunks: bool = False,
     if len(context) > 6000:
         context = context[:6000]
 
-    # Add last 3 Q&A turns from chat_history if provided
+    # Add last 2 user questions from chat_history if provided (no answers)
     history_str = ""
     if chat_history:
-        # Only use last 3 turns (Q&A pairs)
-        last_turns = chat_history[-3:]
+        # Only use last 2 user questions (not answers)
+        last_turns = chat_history[-2:]
         for turn in last_turns:
             user_q = turn.get("user", "")
-            bot_a = turn.get("bot", "")
             if user_q:
                 history_str += f"User: {user_q}\n"
-            if bot_a:
-                history_str += f"Assistant: {bot_a}\n"
         if history_str:
-            history_str = f"Previous conversation (last 3 turns):\n" + history_str + "---\n"
+            history_str = f"Previous questions (last 2):\n" + history_str + "---\n"
 
     prompt = (
-        "You are a helpful and knowledgeable assistant. Based only on the following excerpts from a textbook or document, answer the user's question as thoroughly and clearly as possible. "
-        "If the answer is short enough, show the full answer in detail. If the answer is too long for the response, summarize long lists or explanations into concise bullet points, but do not omit any key information or steps. "
-        "Explain in simple terms, as if teaching a student. Use clear language and examples if possible. "
-        "If possible, quote or paraphrase relevant lines. If the answer is not present, say so.\n"
+        "Answer the user's question using only the provided document context. "
+        "Be clear, concise, and explain as if teaching a student. "
+        "If the answer is not present, say so.\n"
         f"{history_str}"
         f"Context from the document:\n{context}\n"
         f"User's new question: {question}\n"
