@@ -36,17 +36,17 @@ def answer_with_rag(question: str, top_k: int = 10, return_chunks: bool = False,
     if len(context) > 6000:
         context = context[:6000]
 
-    # Add last 2 user questions from chat_history if provided (no answers)
+    # Add last 4 user questions from chat_history if provided (no answers)
     history_str = ""
     if chat_history:
-        # Only use last 2 user questions (not answers)
-        last_turns = chat_history[-2:]
+        # Only use last 4 user questions (not answers)
+        last_turns = chat_history[-4:]
         for turn in last_turns:
             user_q = turn.get("user", "")
             if user_q:
                 history_str += f"User: {user_q}\n"
         if history_str:
-            history_str = f"Previous questions (last 2):\n" + history_str + "---\n"
+            history_str = f"Previous questions (last 4):\n" + history_str + "---\n"
 
     prompt = (
         "Answer the user's question using only the provided document context. "
